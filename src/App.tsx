@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { PDFViewer } from '@/components/PDFViewer';
 import { Sidebar } from '@/components/Sidebar';
@@ -7,6 +7,8 @@ import { ChatPanel } from '@/components/ChatPanel';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Button } from '@/components/ui/button';
 import { Upload } from 'lucide-react';
+import { Note } from '@/models/Note';
+import { StorageService } from '@/services/StorageService';
 
 interface Highlight {
   id: string;
@@ -23,7 +25,18 @@ function App() {
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [isHighlightMode, setIsHighlightMode] = useState(false);
   const [containerWidth, setContainerWidth] = useState<number>(0);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [bookKey, setBookKey] = useState<string>('');
   const viewerContainerRef = React.useRef<HTMLDivElement>(null);
+
+  // Load notes when file changes
+  useEffect(() => {
+    if (pdfFile) {
+      const key = StorageService.generateBookKey(pdfFile);
+      setBookKey(key);
+      StorageService.getNotes(key).then(setNotes);
+    }
+  }, [pdfFile]);
 
   const handleFileSelect = useCallback(() => {
     const input = document.createElement('input');
@@ -98,6 +111,17 @@ function App() {
     });
   }, [pdfDoc]);
 
+  const handleNoteClick = useCallback((note: Note) => {
+    setCurrentPage(note.page);
+    // The PDFViewer will handle highlighting the note
+  }, []);
+
+  const handleNoteDelete = useCallback(async (noteKey: string) => {
+    await StorageService.deleteNote(noteKey);
+    const updatedNotes = notes.filter(n => n.key !== noteKey);
+    setNotes(updatedNotes);
+  }, [notes]);
+
   if (!pdfFile) {
     return (
       <div 
@@ -138,6 +162,9 @@ function App() {
               pdfDoc={pdfDoc}
               currentPage={currentPage}
               onPageSelect={setCurrentPage}
+              notes={notes}
+              onNoteClick={handleNoteClick}
+              onNoteDelete={handleNoteDelete}
             />
           </ResizablePanel>
           
@@ -152,6 +179,7 @@ function App() {
                 onPageChange={setCurrentPage}
                 onDocumentLoad={setPdfDoc}
                 onTextSelect={handleTextSelect}
+                onNotesUpdate={setNotes}
                 highlights={highlights}
               />
             </div>

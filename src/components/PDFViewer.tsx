@@ -1,8 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { GlobalWorkerOptions } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { cn } from '@/lib/utils';
+import { SelectionPopup } from './SelectionPopup';
+import { NoteDialog } from './NoteDialog';
+import { ContextMenu } from './ContextMenu';
+import { TranslationPopup } from './TranslationPopup';
+import { StorageService } from '@/services/StorageService';
+import { TranslationService } from '@/services/TranslationService';
+import { NoteModel, Note } from '@/models/Note';
+import { getSelectionInfo, createHighlightRects, SelectionInfo } from '@/utils/selectionUtils';
+import '@/styles/pdf-text-layer.css';
 
 // Configure PDF.js worker
 GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
@@ -14,6 +23,7 @@ interface PDFViewerProps {
   onPageChange: (page: number) => void;
   onDocumentLoad: (doc: PDFDocumentProxy) => void;
   onTextSelect?: (text: string, pageNum: number) => void;
+  onNotesUpdate?: (notes: Note[]) => void;
   highlights?: Array<{
     page: number;
     text: string;
@@ -29,6 +39,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
   onPageChange,
   onDocumentLoad,
   onTextSelect,
+  onNotesUpdate,
   highlights = [],
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -36,6 +47,17 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
   const [pages, setPages] = useState<PDFPageProxy[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [showPopup, setShowPopup] = useState(false);
+  const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
+  const [selectedText, setSelectedText] = useState('');
+  const [selectedPage, setSelectedPage] = useState(1);
+  const [showNoteDialog, setShowNoteDialog] = useState(false);
+  const [bookKey, setBookKey] = useState<string>('');
+  const [selectionInfo, setSelectionInfo] = useState<SelectionInfo | null>(null);
+  const [showContextMenu, setShowContextMenu] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [showTranslation, setShowTranslation] = useState(false);
 
   // Load PDF document
   useEffect(() => {
@@ -57,6 +79,15 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
         const pdf = await loadingTask.promise;
         setPdfDoc(pdf);
         onDocumentLoad(pdf);
+
+        // Generate book key for storage
+        const key = StorageService.generateBookKey(file);
+        setBookKey(key);
+
+        // Load saved notes
+        const savedNotes = await StorageService.getNotes(key);
+        setNotes(savedNotes);
+        onNotesUpdate?.(savedNotes);
 
         // Load all pages
         const pagePromises: Promise<PDFPageProxy>[] = [];
@@ -89,13 +120,17 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
 
     pages.forEach(async (page, index) => {
       const pageNum = index + 1;
-      const pageDiv = document.createElement('div');
-      pageDiv.className = 'pdf-page relative mb-4 bg-white shadow-md';
-      pageDiv.id = `page-${pageNum}`;
       
       // Get device pixel ratio for high-quality rendering
       const devicePixelRatio = window.devicePixelRatio || 1;
       const viewport = page.getViewport({ scale: scale * devicePixelRatio });
+      
+      const pageDiv = document.createElement('div');
+      pageDiv.className = 'pdf-page relative mb-4 bg-white shadow-md';
+      pageDiv.id = `page-${pageNum}`;
+      pageDiv.style.position = 'relative';
+      pageDiv.style.width = `${viewport.width / devicePixelRatio}px`;
+      pageDiv.style.height = `${viewport.height / devicePixelRatio}px`;
       
       // Canvas for PDF rendering
       const canvas = document.createElement('canvas');
@@ -110,13 +145,26 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
       canvas.style.height = `${viewport.height / devicePixelRatio}px`;
       canvas.className = 'block';
 
-      // Text layer
+      // Text layer for selectable text
       const textLayerDiv = document.createElement('div');
       textLayerDiv.className = 'textLayer';
       textLayerDiv.style.width = `${viewport.width / devicePixelRatio}px`;
       textLayerDiv.style.height = `${viewport.height / devicePixelRatio}px`;
+      textLayerDiv.style.position = 'absolute';
+      textLayerDiv.style.left = '0';
+      textLayerDiv.style.top = '0';
 
+      // Create highlight layer
+      const highlightLayer = document.createElement('div');
+      highlightLayer.className = 'highlight-layer';
+      
+      // Ensure proper z-index ordering
+      canvas.style.position = 'absolute';
+      canvas.style.left = '0';
+      canvas.style.top = '0';
+      
       pageDiv.appendChild(canvas);
+      pageDiv.appendChild(highlightLayer); // Add highlight layer between canvas and text
       pageDiv.appendChild(textLayerDiv);
       container.appendChild(pageDiv);
 
@@ -130,30 +178,116 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
         }).promise;
       }
 
-      // Render text layer
+      // Render text layer for selectable text
       const textContent = await page.getTextContent();
       const textLayerViewport = page.getViewport({ scale });
-      pdfjsLib.renderTextLayer({
-        textContent,
+      
+      // Clear previous content
+      textLayerDiv.innerHTML = '';
+      
+      // Render text layer for PDF.js 3.x
+      const textLayer = pdfjsLib.renderTextLayer({
+        textContent: textContent,
         container: textLayerDiv,
         viewport: textLayerViewport,
         textDivs: [],
       });
+      
+      await textLayer.promise;
 
       // Add text selection handler
-      textLayerDiv.addEventListener('mouseup', () => {
-        const selection = window.getSelection();
-        const selectedText = selection?.toString().trim();
-        if (selectedText && onTextSelect) {
-          onTextSelect(selectedText, pageNum);
+      textLayerDiv.addEventListener('mouseup', (event) => {
+        // 如果是右键点击，不处理选择弹窗
+        if (event.button === 2) return;
+        
+        const info = getSelectionInfo();
+        if (info) {
+          setSelectedText(info.text);
+          setSelectedPage(info.pageNum);
+          setSelectionInfo(info);
+          
+          // Calculate popup position (use the last rect for positioning)
+          const lastRect = info.rects[info.rects.length - 1];
+          if (lastRect) {
+            setPopupPosition({
+              x: lastRect.left + lastRect.width / 2,
+              y: lastRect.top
+            });
+            setShowPopup(true);
+          }
+          
+          if (onTextSelect) {
+            onTextSelect(info.text, info.pageNum);
+          }
+        } else {
+          setShowPopup(false);
+          setSelectionInfo(null);
         }
       });
 
-      // Apply highlights
+      // Add context menu handler
+      textLayerDiv.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        
+        const info = getSelectionInfo();
+        if (info) {
+          setSelectedText(info.text);
+          setSelectedPage(info.pageNum);
+          setSelectionInfo(info);
+          setContextMenuPosition({ x: event.clientX, y: event.clientY });
+          setShowContextMenu(true);
+          setShowPopup(false); // Hide selection popup when showing context menu
+        }
+      });
+
+      // Apply highlights and notes
+      const pageNotes = notes.filter(note => note.page === pageNum);
+      pageNotes.forEach(note => {
+        // Check if we have multiple rects (for multi-line selections)
+        let rects = [];
+        try {
+          rects = JSON.parse(note.range);
+        } catch (e) {
+          // Fallback to single rect from position
+          rects = [note.position];
+        }
+        
+        // Create highlight elements for each rect
+        rects.forEach((rect: any, index: number) => {
+          const highlightDiv = document.createElement('div');
+          highlightDiv.className = 'absolute pointer-events-auto cursor-pointer highlight-rect';
+          highlightDiv.style.left = `${rect.x}px`;
+          highlightDiv.style.top = `${rect.y}px`;
+          highlightDiv.style.width = `${rect.width}px`;
+          highlightDiv.style.height = `${rect.height}px`;
+          highlightDiv.style.backgroundColor = note.color;
+          highlightDiv.style.opacity = '0.3';
+          highlightDiv.dataset.noteKey = note.key;
+          
+          // Add rounded corners for first and last rect
+          if (index === 0) {
+            highlightDiv.style.borderTopLeftRadius = '2px';
+            highlightDiv.style.borderBottomLeftRadius = '2px';
+          }
+          if (index === rects.length - 1) {
+            highlightDiv.style.borderTopRightRadius = '2px';
+            highlightDiv.style.borderBottomRightRadius = '2px';
+          }
+          
+          // Add click handler to show note
+          highlightDiv.addEventListener('click', () => {
+            if (handleNoteClick) {
+              handleNoteClick(note);
+            }
+          });
+          
+          highlightLayer.appendChild(highlightDiv);
+        });
+      });
+      
+      // Apply simple highlights from props
       const pageHighlights = highlights.filter(h => h.page === pageNum);
       pageHighlights.forEach(highlight => {
-        // This is a simplified highlight implementation
-        // In production, you'd want more sophisticated text matching
         const textDivs = textLayerDiv.querySelectorAll('span');
         textDivs.forEach(span => {
           if (span.textContent?.includes(highlight.text)) {
@@ -169,7 +303,171 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
     if (targetPage) {
       targetPage.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [pages, scale, currentPage, highlights, onTextSelect]);
+  }, [pages, scale, currentPage, highlights, notes, onTextSelect]);
+
+  // Handle highlight creation
+  const handleHighlight = useCallback(async (color: string) => {
+    if (!selectionInfo || !bookKey) return;
+    
+    const pageElement = document.getElementById(`page-${selectionInfo.pageNum}`);
+    if (!pageElement) return;
+    
+    const pageRect = pageElement.getBoundingClientRect();
+    
+    // Store all rects for multi-line selections
+    const rects = selectionInfo.rects.map(rect => ({
+      x: rect.left - pageRect.left,
+      y: rect.top - pageRect.top,
+      width: rect.width,
+      height: rect.height
+    }));
+    
+    // Use the bounding box of all rects for the main position
+    const boundingBox = {
+      x: Math.min(...rects.map(r => r.x)),
+      y: Math.min(...rects.map(r => r.y)),
+      width: Math.max(...rects.map(r => r.x + r.width)) - Math.min(...rects.map(r => r.x)),
+      height: Math.max(...rects.map(r => r.y + r.height)) - Math.min(...rects.map(r => r.y))
+    };
+    
+    const note = new NoteModel(
+      bookKey,
+      selectionInfo.pageNum,
+      selectionInfo.text,
+      boundingBox,
+      JSON.stringify(rects), // Store all rects in range field
+      '',
+      '0',
+      color,
+      []
+    );
+    
+    await StorageService.saveNote(note);
+    const updatedNotes = [...notes, note];
+    setNotes(updatedNotes);
+    onNotesUpdate?.(updatedNotes);
+    setShowPopup(false);
+    window.getSelection()?.removeAllRanges();
+    setSelectionInfo(null);
+  }, [selectionInfo, bookKey, notes, onNotesUpdate]);
+
+  // Handle note creation
+  const handleNote = useCallback(() => {
+    setShowNoteDialog(true);
+    setShowPopup(false);
+  }, []);
+
+  // Handle note save
+  const handleNoteSave = useCallback(async (noteText: string) => {
+    if (!selectionInfo || !bookKey) return;
+    
+    const pageElement = document.getElementById(`page-${selectionInfo.pageNum}`);
+    if (!pageElement) return;
+    
+    const pageRect = pageElement.getBoundingClientRect();
+    
+    // Store all rects for multi-line selections
+    const rects = selectionInfo.rects.map(rect => ({
+      x: rect.left - pageRect.left,
+      y: rect.top - pageRect.top,
+      width: rect.width,
+      height: rect.height
+    }));
+    
+    // Use the bounding box of all rects for the main position
+    const boundingBox = {
+      x: Math.min(...rects.map(r => r.x)),
+      y: Math.min(...rects.map(r => r.y)),
+      width: Math.max(...rects.map(r => r.x + r.width)) - Math.min(...rects.map(r => r.x)),
+      height: Math.max(...rects.map(r => r.y + r.height)) - Math.min(...rects.map(r => r.y))
+    };
+    
+    const note = new NoteModel(
+      bookKey,
+      selectionInfo.pageNum,
+      selectionInfo.text,
+      boundingBox,
+      JSON.stringify(rects), // Store all rects in range field
+      noteText,
+      '0',
+      '#ffeb3b',
+      []
+    );
+    
+    await StorageService.saveNote(note);
+    const updatedNotes = [...notes, note];
+    setNotes(updatedNotes);
+    onNotesUpdate?.(updatedNotes);
+    window.getSelection()?.removeAllRanges();
+    setSelectionInfo(null);
+  }, [selectionInfo, bookKey, notes, onNotesUpdate]);
+
+  // Handle copy
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(selectedText);
+    setShowPopup(false);
+    window.getSelection()?.removeAllRanges();
+  }, [selectedText]);
+
+  // Handle search
+  const handleSearch = useCallback(() => {
+    window.open(`https://www.google.com/search?q=${encodeURIComponent(selectedText)}`, '_blank');
+    setShowPopup(false);
+  }, [selectedText]);
+
+  // Handle note click
+  const handleNoteClick = useCallback((note: Note) => {
+    alert(`Note: ${note.notes || 'No note text'}\n\nHighlighted text: ${note.text}`);
+  }, []);
+
+  // Context menu handlers
+  const handleTranslate = useCallback(() => {
+    setShowTranslation(true);
+    setShowContextMenu(false);
+  }, []);
+
+  const handleLookup = useCallback(() => {
+    window.open(`https://www.merriam-webster.com/dictionary/${encodeURIComponent(selectedText)}`, '_blank');
+    setShowContextMenu(false);
+  }, [selectedText]);
+
+  const handleSpeak = useCallback(() => {
+    TranslationService.speak(selectedText);
+    setShowContextMenu(false);
+  }, [selectedText]);
+
+  const handleShare = useCallback(() => {
+    if (navigator.share) {
+      navigator.share({
+        title: 'PDF Text',
+        text: selectedText,
+      });
+    } else {
+      navigator.clipboard.writeText(selectedText);
+      alert('文本已复制到剪贴板');
+    }
+    setShowContextMenu(false);
+  }, [selectedText]);
+
+  const handleContextMenuHighlight = useCallback(() => {
+    handleHighlight('#ffeb3b'); // Default yellow
+    setShowContextMenu(false);
+  }, [handleHighlight]);
+
+  const handleContextMenuNote = useCallback(() => {
+    handleNote();
+    setShowContextMenu(false);
+  }, [handleNote]);
+
+  const handleContextMenuCopy = useCallback(() => {
+    handleCopy();
+    setShowContextMenu(false);
+  }, [handleCopy]);
+
+  const handleContextMenuSearch = useCallback(() => {
+    handleSearch();
+    setShowContextMenu(false);
+  }, [handleSearch]);
 
   if (loading) {
     return (
@@ -196,98 +494,49 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
   }
 
   return (
-    <div 
-      ref={containerRef}
-      className="pdf-container p-8 overflow-auto h-full bg-gray-100"
-    >
-      <style jsx>{`
-        .textLayer {
-          position: absolute;
-          text-align: initial;
-          left: 0;
-          top: 0;
-          right: 0;
-          bottom: 0;
-          overflow: hidden;
-          line-height: 1;
-          text-size-adjust: none;
-          forced-color-adjust: none;
-          transform-origin: 0 0;
-          z-index: 2;
-        }
-        
-        .textLayer :is(span, br) {
-          color: transparent;
-          position: absolute;
-          white-space: pre;
-          cursor: text;
-          transform-origin: 0% 0%;
-        }
-        
-        .textLayer span.markedContent {
-          top: 0;
-          height: 0;
-        }
-        
-        .textLayer .highlight {
-          margin: -1px;
-          padding: 1px;
-          background-color: rgba(180, 0, 170, 0.2);
-          border-radius: 4px;
-        }
-        
-        .textLayer .highlight.appended {
-          position: initial;
-        }
-        
-        .textLayer .highlight.begin {
-          border-radius: 4px 0 0 4px;
-        }
-        
-        .textLayer .highlight.end {
-          border-radius: 0 4px 4px 0;
-        }
-        
-        .textLayer .highlight.middle {
-          border-radius: 0;
-        }
-        
-        .textLayer .highlight.selected {
-          background-color: rgba(0, 100, 0, 0.2);
-        }
-        
-        .textLayer ::-moz-selection {
-          background: rgba(0, 0, 255, 0.3);
-        }
-        
-        .textLayer ::selection {
-          background: rgba(0, 0, 255, 0.3);
-        }
-        
-        .textLayer br::-moz-selection {
-          background: transparent;
-        }
-        
-        .textLayer br::selection {
-          background: transparent;
-        }
-        
-        .textLayer .endOfContent {
-          display: block;
-          position: absolute;
-          left: 0;
-          top: 100%;
-          right: 0;
-          bottom: 0;
-          z-index: -1;
-          cursor: default;
-          user-select: none;
-        }
-        
-        .textLayer .endOfContent.active {
-          top: 0;
-        }
-      `}</style>
-    </div>
+    <>
+      <SelectionPopup
+        visible={showPopup}
+        position={popupPosition}
+        onHighlight={handleHighlight}
+        onNote={handleNote}
+        onCopy={handleCopy}
+        onSearch={handleSearch}
+      />
+      
+      <ContextMenu
+        visible={showContextMenu}
+        position={contextMenuPosition}
+        selectedText={selectedText}
+        onClose={() => setShowContextMenu(false)}
+        onTranslate={handleTranslate}
+        onCopy={handleContextMenuCopy}
+        onSearch={handleContextMenuSearch}
+        onHighlight={handleContextMenuHighlight}
+        onNote={handleContextMenuNote}
+        onSpeak={handleSpeak}
+        onLookup={handleLookup}
+        onShare={handleShare}
+      />
+      
+      <TranslationPopup
+        isOpen={showTranslation}
+        onClose={() => setShowTranslation(false)}
+        selectedText={selectedText}
+      />
+      
+      <NoteDialog
+        isOpen={showNoteDialog}
+        onClose={() => setShowNoteDialog(false)}
+        onSave={handleNoteSave}
+        selectedText={selectedText}
+      />
+      
+      <div 
+        ref={containerRef}
+        className="pdf-container p-8 overflow-auto h-full bg-gray-100"
+      >
+      </div>
+    </>
   );
 };
