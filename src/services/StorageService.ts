@@ -2,11 +2,17 @@ import { Note } from '../models/Note';
 
 export class StorageService {
   private static readonly NOTES_KEY = 'pdf-reader-notes';
-  private static readonly BOOKMARKS_KEY = 'pdf-reader-bookmarks';
+  // private static readonly BOOKMARKS_KEY = 'pdf-reader-bookmarks';
 
   static async saveNote(note: Note): Promise<void> {
     const notes = await this.getNotes();
-    notes.push(note);
+    // 确保不重复添加相同的注释
+    const existingIndex = notes.findIndex(n => n.key === note.key);
+    if (existingIndex >= 0) {
+      notes[existingIndex] = note;
+    } else {
+      notes.push(note);
+    }
     localStorage.setItem(this.NOTES_KEY, JSON.stringify(notes));
   }
 

@@ -3,11 +3,8 @@ import {
   Highlighter, 
   Copy, 
   MessageSquare, 
-  Search,
-  Volume2,
-  BookOpen
+  Search
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 interface SelectionPopupProps {
   onHighlight: (color: string) => void;

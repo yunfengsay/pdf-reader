@@ -8,7 +8,6 @@ import {
   FileText,
   Highlighter,
   Languages,
-  Menu,
   Maximize,
   AlignJustify,
 } from 'lucide-react';

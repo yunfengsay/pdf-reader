@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Upload } from 'lucide-react';
 import { Note } from '@/models/Note';
 import { StorageService } from '@/services/StorageService';
+import { DrawingToolbar, DrawingTool, HighlightStyle } from '@/components/DrawingToolbar';
 
 interface Highlight {
   id: string;
@@ -24,16 +25,19 @@ function App() {
   const [scale, setScale] = useState(1);
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [isHighlightMode, setIsHighlightMode] = useState(false);
-  const [containerWidth, setContainerWidth] = useState<number>(0);
   const [notes, setNotes] = useState<Note[]>([]);
-  const [bookKey, setBookKey] = useState<string>('');
+  // const [bookKey, setBookKey] = useState<string>('');
+  const [activeTool, setActiveTool] = useState<DrawingTool>(null);
+  const [highlightStyle, setHighlightStyle] = useState<HighlightStyle>('background');
+  const [drawingColor, setDrawingColor] = useState('#ffeb3b');
+  const [lineWidth, setLineWidth] = useState(2);
   const viewerContainerRef = React.useRef<HTMLDivElement>(null);
 
   // Load notes when file changes
   useEffect(() => {
     if (pdfFile) {
       const key = StorageService.generateBookKey(pdfFile);
-      setBookKey(key);
+      // setBookKey(key);
       StorageService.getNotes(key).then(setNotes);
     }
   }, [pdfFile]);
@@ -181,6 +185,20 @@ function App() {
                 onTextSelect={handleTextSelect}
                 onNotesUpdate={setNotes}
                 highlights={highlights}
+                drawingTool={
+                  activeTool === 'highlight' || 
+                  activeTool === 'text' || 
+                  activeTool === 'stamp' || 
+                  activeTool === 'eraser' 
+                    ? null 
+                    : activeTool
+                }
+                drawingColor={drawingColor}
+                lineWidth={lineWidth}
+                onAnnotationsUpdate={(annotations) => {
+                  // Store annotations if needed
+                  console.log('Annotations updated:', annotations);
+                }}
               />
             </div>
           </ResizablePanel>
@@ -192,6 +210,20 @@ function App() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      
+      {/* Drawing Toolbar */}
+      {pdfDoc && (
+        <DrawingToolbar
+          activeTool={activeTool}
+          onToolChange={setActiveTool}
+          highlightStyle={highlightStyle}
+          onHighlightStyleChange={setHighlightStyle}
+          color={drawingColor}
+          onColorChange={setDrawingColor}
+          lineWidth={lineWidth}
+          onLineWidthChange={setLineWidth}
+        />
+      )}
     </div>
   );
 }

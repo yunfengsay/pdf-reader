@@ -106,3 +106,34 @@
 .highlight-layer > div {
   pointer-events: auto;
 }
+
+/* PDF.js annotation layer styling */
+.annotationLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* Annotation canvas wrapper */
+.annotation-canvas-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+}
+
+/* Debug: Make canvas visible when drawing tool is active */
+.annotation-canvas-wrapper canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* Override PDF.js warnings about scale factor */
+.pdf-container {
+  --scale-factor: 1;
+}
