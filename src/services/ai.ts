@@ -12,9 +12,9 @@ export const getAIModel = () => {
 
   switch (settings.provider) {
     case "xai":
-      return xai(settings.model || "grok-beta", {
-        apiKey: settings.apiKey
-      });
+      // xAI SDK expects API key to be set via environment variable
+      process.env.XAI_API_KEY = settings.apiKey;
+      return xai(settings.model || "grok-beta");
     case "dashscope":
       const dashscope = createOpenAI({
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",

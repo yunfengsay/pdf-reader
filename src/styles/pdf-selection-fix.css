@@ -1,0 +1,69 @@
+/* Fix for text selection overlapping issues */
+
+/* Disable user selection on non-text elements */
+.pdf-page canvas,
+.highlight-layer,
+.annotation-canvas-wrapper {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Ensure text layer is selectable */
+.textLayer {
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+}
+
+/* Fix selection highlight rendering */
+.textLayer span {
+  /* Remove color transparent to fix selection visibility */
+  color: rgba(0, 0, 0, 0.01) !important; /* Nearly transparent but not fully */
+}
+
+/* Better selection styling */
+.textLayer span::selection {
+  background-color: rgba(0, 123, 255, 0.3) !important;
+  color: rgba(0, 0, 0, 0.01) !important;
+}
+
+.textLayer span::-moz-selection {
+  background-color: rgba(0, 123, 255, 0.3) !important;
+  color: rgba(0, 0, 0, 0.01) !important;
+}
+
+/* Prevent highlight boxes from interfering with selection */
+.textLayer .highlight {
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Fix for overlapping highlight elements */
+.pdf-page {
+  position: relative;
+}
+
+.pdf-page > * {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Ensure proper layer ordering */
+.pdf-page canvas { z-index: 0; }
+.highlight-layer { z-index: 1; }
+.textLayer { z-index: 2; }
+.annotationLayer { z-index: 3; }
+.annotation-canvas-wrapper { z-index: 4; }
+
+/* Remove any transform that might cause overlap */
+.textLayer span {
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}

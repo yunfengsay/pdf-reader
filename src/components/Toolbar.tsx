@@ -8,9 +8,8 @@ import {
   FileText,
   Highlighter,
   Languages,
-  Maximize,
-  AlignJustify,
   MessageSquare,
+  Library,
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -23,10 +22,9 @@ interface ToolbarProps {
   onToggleHighlight: () => void;
   onTranslate: () => void;
   isHighlightMode: boolean;
-  onFitToWidth?: () => void;
-  onFitToPage?: () => void;
   onToggleChat?: () => void;
   isChatOpen?: boolean;
+  onBackToLibrary?: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -39,10 +37,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onToggleHighlight,
   onTranslate,
   isHighlightMode,
-  onFitToWidth,
-  onFitToPage,
   onToggleChat,
   isChatOpen,
+  onBackToLibrary,
 }) => {
   const handlePageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const page = parseInt(e.target.value);
@@ -66,6 +63,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   return (
     <div className="h-14 border-b border-gray-200 bg-white px-4 flex items-center justify-between">
       <div className="flex items-center gap-2">
+        {onBackToLibrary && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onBackToLibrary}
+            title="返回文档库"
+          >
+            <Library className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"
@@ -136,27 +143,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             <ZoomIn className="h-4 w-4" />
           </Button>
           
-          {onFitToWidth && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onFitToWidth}
-              title="适应宽度"
-            >
-              <AlignJustify className="h-4 w-4" />
-            </Button>
-          )}
-          
-          {onFitToPage && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onFitToPage}
-              title="适应页面"
-            >
-              <Maximize className="h-4 w-4" />
-            </Button>
-          )}
         </div>
       </div>
 

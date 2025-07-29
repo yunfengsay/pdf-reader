@@ -21,7 +21,7 @@ import '@/styles/pdf-text-layer.css';
 GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
 
 interface PDFViewerProps {
-  file: File | string | null;
+  file: File | string | Blob | null;
   currentPage: number;
   scale: number;
   onPageChange: (page: number) => void;

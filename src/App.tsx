@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { PDFViewer } from '@/components/PDFViewer';
 import { Sidebar } from '@/components/Sidebar';
 import { Toolbar } from '@/components/Toolbar';
@@ -9,8 +9,13 @@ import { ChatPanel, ChatPanelRef } from '@/components/ChatPanel';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { usePdfViewer } from '@/hooks/usePdfViewer';
 import { useAnnotations } from '@/hooks/useAnnotations';
+import { PDFLibrary } from '@/components/PDFLibrary';
+import { PDFDocument } from '@/db';
+import { usePDFStore } from '@/stores/pdfStore';
 
 function App() {
+  const [currentView, setCurrentView] = useState<'library' | 'viewer'>('library');
+  const { setCurrentDocument } = usePDFStore();
   const {
     pdfFile,
     pdfDoc,
@@ -26,8 +31,6 @@ function App() {
     handleFileSelect,
     handleDrop,
     handleDragOver,
-    handleFitToWidth,
-    handleFitToPage,
     handleNoteClick,
     handleNoteDelete,
   } = usePdfViewer();
@@ -53,6 +56,24 @@ function App() {
   const [selectedTextForAsk, setSelectedTextForAsk] = useState('');
   const chatPanelRef = useRef<ChatPanelRef>(null);
 
+  const handleOpenDocument = useCallback(async (document: PDFDocument) => {
+    setCurrentDocument(document);
+    
+    if (document.type === 'local' && document.fileData) {
+      // For local files, use the stored Blob
+      handleFileSelect(document.fileData);
+    } else if (document.url) {
+      // For arxiv/url documents, use the URL
+      handleFileSelect(document.url);
+    }
+    
+    setCurrentView('viewer');
+  }, [handleFileSelect, setCurrentDocument]);
+
+  const handleBackToLibrary = useCallback(() => {
+    setCurrentView('library');
+  }, []);
+
   const handleTranslate = useCallback(() => {
     const selection = window.getSelection();
     const selectedText = selection?.toString().trim();
@@ -66,6 +87,10 @@ function App() {
       chatPanelRef.current.addPromptText(`关于这段文本: "${selectedTextForAsk}"`);
     }
   }, [selectedTextForAsk]);
+
+  if (currentView === 'library') {
+    return <PDFLibrary onOpenDocument={handleOpenDocument} />;
+  }
 
   if (!pdfFile) {
     return (
@@ -92,14 +117,13 @@ function App() {
         scale={scale}
         onPageChange={setCurrentPage}
         onScaleChange={setScale}
-        onOpenFile={handleFileSelect}
+        onOpenFile={() => handleFileSelect()}
         onToggleHighlight={toggleHighlightMode}
         onTranslate={handleTranslate}
         isHighlightMode={isHighlightMode}
-        onFitToWidth={handleFitToWidth}
-        onFitToPage={handleFitToPage}
         onToggleChat={() => setShowChatPanel(!showChatPanel)}
         isChatOpen={showChatPanel}
+        onBackToLibrary={handleBackToLibrary}
       />
 
       <div className="flex-1 flex overflow-hidden">
