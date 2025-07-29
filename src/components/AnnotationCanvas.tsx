@@ -29,14 +29,22 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
   onDrawingComplete,
   existingDrawings = [],
 }) => {
-  console.log('AnnotationCanvas rendered:', { pageNum, tool, color, width, height });
+  console.log(`AnnotationCanvas rendered for page ${pageNum}:`, { 
+    tool, 
+    color, 
+    existingDrawingsCount: existingDrawings.length,
+    existingDrawingsPages: existingDrawings.map(d => d.pageNumber)
+  });
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPath, setCurrentPath] = useState<Point[]>([]);
   const [startPoint, setStartPoint] = useState<Point | null>(null);
 
+  // Store the current drawing in progress
+  const currentDrawingRef = useRef<{ path: Point[]; tool: string } | null>(null);
+
   // Redraw existing annotations
-  useEffect(() => {
+  const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -46,9 +54,14 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
     // Clear canvas
     ctx.clearRect(0, 0, width, height);
 
-    // Draw existing annotations for this page only
-    const pageDrawings = existingDrawings.filter(d => d.pageNumber === pageNum);
-    pageDrawings.forEach(drawing => {
+    // Draw ONLY annotations for this specific page
+    existingDrawings.forEach(drawing => {
+      // Double-check page number
+      if (drawing.pageNumber !== pageNum) {
+        console.warn(`Skipping drawing for page ${drawing.pageNumber} on page ${pageNum}`);
+        return;
+      }
+      
       drawing.data.paths.forEach(path => {
         ctx.beginPath();
         ctx.strokeStyle = path.color;
@@ -100,7 +113,31 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
         ctx.stroke();
       });
     });
-  }, [existingDrawings, pageNum, width, height]);
+
+    // Redraw current drawing in progress if any
+    if (currentDrawingRef.current && isDrawing) {
+      const { path, tool: currentTool } = currentDrawingRef.current;
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      if (currentTool === 'pen' && path.length > 0) {
+        ctx.moveTo(path[0].x, path[0].y);
+        path.forEach((point, index) => {
+          if (index > 0) {
+            ctx.lineTo(point.x, point.y);
+          }
+        });
+        ctx.stroke();
+      }
+    }
+  }, [existingDrawings, pageNum, width, height, isDrawing, color, lineWidth]);
+
+  useEffect(() => {
+    redrawCanvas();
+  }, [redrawCanvas]);
 
   const getMousePosition = (e: React.MouseEvent<HTMLCanvasElement>): Point => {
     const canvas = canvasRef.current;
@@ -120,6 +157,7 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
     setIsDrawing(true);
     setStartPoint(point);
     setCurrentPath([point]);
+    currentDrawingRef.current = { path: [point], tool };
   }, [tool]);
 
   const draw = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -132,20 +170,14 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
 
     if (tool === 'pen') {
       // Add point to path
-      setCurrentPath(prev => [...prev, point]);
+      setCurrentPath(prev => {
+        const newPath = [...prev, point];
+        currentDrawingRef.current = { path: newPath, tool };
+        return newPath;
+      });
 
-      // Draw the new segment
-      ctx.beginPath();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      
-      if (currentPath.length > 0) {
-        ctx.moveTo(currentPath[currentPath.length - 1].x, currentPath[currentPath.length - 1].y);
-        ctx.lineTo(point.x, point.y);
-        ctx.stroke();
-      }
+      // Redraw everything with the new point
+      redrawCanvas();
     } else {
       // For shapes, redraw everything including preview
       const canvas = canvasRef.current;
@@ -223,29 +255,34 @@ export const AnnotationCanvas: React.FC<AnnotationCanvasProps> = ({
       finalPath = [startPoint, point];
     }
 
-    // Create annotation data
-    const annotationData: DrawingAnnotation['data'] = {
-      tool,
-      paths: [{
-        points: finalPath,
-        lineWidth,
-        color,
-      }],
-      bounds: {
-        x: Math.min(...finalPath.map(p => p.x)),
-        y: Math.min(...finalPath.map(p => p.y)),
-        width: Math.max(...finalPath.map(p => p.x)) - Math.min(...finalPath.map(p => p.x)),
-        height: Math.max(...finalPath.map(p => p.y)) - Math.min(...finalPath.map(p => p.y)),
-      },
-    };
+    // Only create annotation if we have valid points
+    if (finalPath.length > 0) {
+      // Create annotation data
+      const annotationData: DrawingAnnotation['data'] = {
+        tool,
+        paths: [{
+          points: finalPath,
+          lineWidth,
+          color,
+        }],
+        bounds: {
+          x: Math.min(...finalPath.map(p => p.x)),
+          y: Math.min(...finalPath.map(p => p.y)),
+          width: Math.max(...finalPath.map(p => p.x)) - Math.min(...finalPath.map(p => p.x)),
+          height: Math.max(...finalPath.map(p => p.y)) - Math.min(...finalPath.map(p => p.y)),
+        },
+      };
 
-    onDrawingComplete(annotationData);
+      console.log(`Creating annotation for page ${pageNum}:`, annotationData);
+      onDrawingComplete(annotationData);
+    }
 
     // Reset drawing state
     setIsDrawing(false);
     setCurrentPath([]);
     setStartPoint(null);
-  }, [isDrawing, tool, startPoint, currentPath, color, lineWidth, onDrawingComplete]);
+    currentDrawingRef.current = null;
+  }, [isDrawing, tool, startPoint, currentPath, color, lineWidth, onDrawingComplete, pageNum]);
 
   return (
     <canvas

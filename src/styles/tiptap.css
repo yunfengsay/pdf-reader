@@ -1,0 +1,67 @@
+/* Tiptap Editor Styles */
+
+/* Placeholder styles */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #adb5bd;
+  pointer-events: none;
+  height: 0;
+}
+
+/* Basic editor styles */
+.ProseMirror {
+  > * + * {
+    margin-top: 0.75em;
+  }
+
+  outline: none;
+  caret-color: #2563eb;
+}
+
+/* Paragraph styles */
+.ProseMirror p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* List styles */
+.ProseMirror ul,
+.ProseMirror ol {
+  padding: 0 1rem;
+  margin: 0.5rem 0;
+}
+
+.ProseMirror ul {
+  list-style-type: disc;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal;
+}
+
+.ProseMirror li {
+  margin: 0.25rem 0;
+}
+
+/* Text formatting */
+.ProseMirror strong {
+  font-weight: 600;
+}
+
+.ProseMirror em {
+  font-style: italic;
+}
+
+/* Blockquote styles */
+.ProseMirror blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid #e5e7eb;
+  margin: 1rem 0;
+  color: #6b7280;
+}
+
+/* Selection styles */
+.ProseMirror ::selection {
+  background: #bfdbfe;
+}

@@ -3,7 +3,8 @@ import {
   Highlighter, 
   Copy, 
   MessageSquare, 
-  Search
+  Search,
+  MessageCircle
 } from 'lucide-react';
 
 interface SelectionPopupProps {
@@ -11,6 +12,7 @@ interface SelectionPopupProps {
   onNote: () => void;
   onCopy: () => void;
   onSearch: () => void;
+  onAsk?: () => void;
   visible: boolean;
   position: { x: number; y: number };
 }
@@ -28,6 +30,7 @@ export const SelectionPopup: React.FC<SelectionPopupProps> = ({
   onNote,
   onCopy,
   onSearch,
+  onAsk,
   visible,
   position,
 }) => {
@@ -68,6 +71,11 @@ export const SelectionPopup: React.FC<SelectionPopupProps> = ({
       title: 'Search',
       onClick: onSearch,
     },
+    ...(onAsk ? [{
+      icon: MessageCircle,
+      title: 'Ask AI',
+      onClick: onAsk,
+    }] : []),
   ];
 
   return (

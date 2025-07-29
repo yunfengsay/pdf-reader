@@ -10,6 +10,7 @@ import {
   Languages,
   Maximize,
   AlignJustify,
+  MessageSquare,
 } from 'lucide-react';
 
 interface ToolbarProps {
@@ -24,6 +25,8 @@ interface ToolbarProps {
   isHighlightMode: boolean;
   onFitToWidth?: () => void;
   onFitToPage?: () => void;
+  onToggleChat?: () => void;
+  isChatOpen?: boolean;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -38,6 +41,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   isHighlightMode,
   onFitToWidth,
   onFitToPage,
+  onToggleChat,
+  isChatOpen,
 }) => {
   const handlePageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const page = parseInt(e.target.value);
@@ -171,6 +176,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         >
           <Languages className="h-4 w-4" />
         </Button>
+        
+        {onToggleChat && (
+          <Button
+            variant={isChatOpen ? "default" : "ghost"}
+            size="icon"
+            onClick={onToggleChat}
+            title="对话助手"
+          >
+            <MessageSquare className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </div>
   );

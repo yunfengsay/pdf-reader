@@ -4,7 +4,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { GlobalWorkerOptions } from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { SelectionPopup } from './SelectionPopup';
-import { NoteDialog } from './NoteDialog';
+import { EnhancedNoteDialog } from './EnhancedNoteDialog';
 import { ContextMenu } from './ContextMenu';
 import { TranslationPopup } from './TranslationPopup';
 import { StorageService } from '@/services/StorageService';
@@ -14,7 +14,7 @@ import { NoteModel, Note } from '@/models/Note';
 import { getSelectionInfo, SelectionInfo } from '@/utils/selectionUtils';
 import { HighlightUtils } from '@/utils/highlightUtils';
 import { AnnotationFactory, Annotation, HighlightAnnotation, DrawingAnnotation } from '@/models/Annotation';
-import { AnnotationCanvas } from './AnnotationCanvas';
+import { DoubleBufferedCanvas } from './DoubleBufferedCanvas';
 import '@/styles/pdf-text-layer.css';
 
 // Configure PDF.js worker
@@ -24,7 +24,7 @@ interface PDFViewerProps {
   file: File | string | null;
   currentPage: number;
   scale: number;
-  onPageChange?: (page: number) => void;
+  onPageChange: (page: number) => void;
   onDocumentLoad: (doc: PDFDocumentProxy) => void;
   onTextSelect?: (text: string, pageNum: number) => void;
   onNotesUpdate?: (notes: Note[]) => void;
@@ -38,6 +38,8 @@ interface PDFViewerProps {
   drawingColor?: string;
   lineWidth?: number;
   onAnnotationsUpdate?: (annotations: Annotation[]) => void;
+  onSelectedTextChange?: (text: string) => void;
+  onAsk?: () => void;
 }
 
 export const PDFViewer: React.FC<PDFViewerProps> = ({
@@ -53,6 +55,8 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
   drawingColor = '#000000',
   lineWidth = 2,
   onAnnotationsUpdate,
+  onSelectedTextChange,
+  onAsk,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pages, setPages] = useState<PDFPageProxy[]>([]);
@@ -239,6 +243,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
         if (info) {
           setSelectedText(info.text);
           setSelectionInfo(info);
+          onSelectedTextChange?.(info.text);
           
           // Calculate popup position (use the last rect for positioning)
           const lastRect = info.rects[info.rects.length - 1];
@@ -256,6 +261,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
         } else {
           setShowPopup(false);
           setSelectionInfo(null);
+          onSelectedTextChange?.('');
         }
       });
 
@@ -358,55 +364,90 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
       });
     });
 
-    // Scroll to current page
-    const targetPage = document.getElementById(`page-${currentPage}`);
-    if (targetPage) {
-      targetPage.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    // Scroll to current page only if explicitly changed by user
+    // Comment out auto-scroll to prevent unwanted scrolling during drawing
+    // const targetPage = document.getElementById(`page-${currentPage}`);
+    // if (targetPage) {
+    //   targetPage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // }
   }, [pages, scale, currentPage, highlights, notes, annotations, drawingTool, onTextSelect]);
 
-  // Render annotation canvases after pages are rendered
+  // Render annotation canvases
+  const canvasRootsRef = useRef<Map<number, any>>(new Map());
+  
   useEffect(() => {
-    if (!containerRef.current || pages.length === 0) return;
+    if (!containerRef.current || pages.length === 0 || !bookKey) return;
+
+    const handleDrawingComplete = async (pageNum: number, drawingData: DrawingAnnotation['data']) => {
+      console.log('Drawing complete on page:', pageNum, drawingData);
+      
+      const annotation = AnnotationFactory.createDrawing(
+        bookKey,
+        pageNum,
+        drawingData.tool,
+        drawingData.paths,
+        drawingData.paths[0].color
+      );
+      
+      // Add to storage and update state
+      await AnnotationStorageService.addAnnotation(bookKey, annotation);
+      const updatedAnnotations = await AnnotationStorageService.getAnnotations(bookKey);
+      setAnnotations(updatedAnnotations);
+      onAnnotationsUpdate?.(updatedAnnotations);
+    };
 
     const canvasWrappers = containerRef.current.querySelectorAll('.annotation-canvas-wrapper');
     
+    // Only initialize canvases once
     canvasWrappers.forEach((wrapper) => {
       const pageNum = parseInt(wrapper.getAttribute('data-pageNum') || '1');
+      
+      if (!canvasRootsRef.current.has(pageNum)) {
+        const pageElement = wrapper.parentElement;
+        if (!pageElement) return;
+
+        const rect = pageElement.getBoundingClientRect();
+        
+        // Clear any existing content safely
+        while (wrapper.firstChild) {
+          wrapper.removeChild(wrapper.firstChild);
+        }
+        // Create a container div for React root
+        const container = document.createElement('div');
+        container.style.width = '100%';
+        container.style.height = '100%';
+        wrapper.appendChild(container);
+        const root = ReactDOM.createRoot(container);
+        canvasRootsRef.current.set(pageNum, root);
+        
+        root.render(
+          <DoubleBufferedCanvas
+            pageNum={pageNum}
+            width={rect.width}
+            height={rect.height}
+            scale={scale}
+            tool={drawingTool}
+            color={drawingColor}
+            lineWidth={lineWidth}
+            onDrawingComplete={handleDrawingComplete}
+            existingDrawings={annotations.filter(a => a.type === 'drawing' && a.pageNumber === pageNum) as DrawingAnnotation[]}
+          />
+        );
+      }
+    });
+
+    // Update existing canvases with new props
+    canvasRootsRef.current.forEach((root, pageNum) => {
+      const wrapper = document.querySelector(`[data-pageNum="${pageNum}"]`);
+      if (!wrapper) return;
+      
       const pageElement = wrapper.parentElement;
       if (!pageElement) return;
-
+      
       const rect = pageElement.getBoundingClientRect();
       
-      // Clear existing content
-      wrapper.innerHTML = '';
-      
-      const handleDrawingComplete = (drawingData: DrawingAnnotation['data']) => {
-        console.log('Drawing complete:', drawingData, 'Page:', pageNum);
-        const annotation = AnnotationFactory.createDrawing(
-          bookKey,
-          pageNum,
-          drawingData.tool,
-          drawingData.paths,
-          drawingColor
-        );
-        
-        console.log('Created annotation:', annotation);
-        const updatedAnnotations = [...annotations, annotation];
-        setAnnotations(updatedAnnotations);
-        onAnnotationsUpdate?.(updatedAnnotations);
-        
-        // Save to storage
-        AnnotationStorageService.saveAnnotations(bookKey, updatedAnnotations);
-      };
-
-      const canvasElement = document.createElement('div');
-      wrapper.appendChild(canvasElement);
-      
-      // Render React component into the wrapper
-      const root = ReactDOM.createRoot(canvasElement);
       root.render(
-        <AnnotationCanvas
+        <DoubleBufferedCanvas
           pageNum={pageNum}
           width={rect.width}
           height={rect.height}
@@ -419,17 +460,35 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
         />
       );
     });
-    
-    // Clean up when drawingTool becomes null
+
     return () => {
-      if (!drawingTool && containerRef.current) {
-        const wrappers = containerRef.current.querySelectorAll('.annotation-canvas-wrapper');
-        wrappers.forEach(wrapper => {
-          wrapper.style.pointerEvents = 'none';
-        });
-      }
+      // Cleanup on unmount
+      canvasRootsRef.current.forEach((root, pageNum) => {
+        try {
+          const wrapper = document.querySelector(`[data-pageNum="${pageNum}"]`);
+          if (wrapper && wrapper.parentNode) {
+            root.unmount();
+          }
+        } catch (error) {
+          console.warn('Error unmounting canvas root:', error);
+        }
+      });
+      canvasRootsRef.current.clear();
     };
   }, [pages, drawingTool, drawingColor, lineWidth, scale, bookKey, annotations, onAnnotationsUpdate]);
+
+  // Handle page navigation (only when currentPage changes)
+  useEffect(() => {
+    if (!containerRef.current || currentPage < 1) return;
+    
+    const targetPage = document.getElementById(`page-${currentPage}`);
+    if (targetPage) {
+      // Use a small delay to ensure the page is rendered
+      setTimeout(() => {
+        targetPage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  }, [currentPage]);
 
   // Handle highlight creation
   const handleHighlight = useCallback(async (color: string) => {
@@ -689,6 +748,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
         onNote={handleNote}
         onCopy={handleCopy}
         onSearch={handleSearch}
+        onAsk={onAsk}
       />
       
       <ContextMenu
@@ -712,7 +772,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
         selectedText={selectedText}
       />
       
-      <NoteDialog
+      <EnhancedNoteDialog
         isOpen={showNoteDialog}
         onClose={() => setShowNoteDialog(false)}
         onSave={handleNoteSave}
@@ -721,7 +781,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({
       
       <div 
         ref={containerRef}
-        className="pdf-container p-8 overflow-auto h-full bg-gray-100"
+        className="pdf-container p-8 h-full bg-gray-100"
         style={{ '--scale-factor': scale } as React.CSSProperties}
       >
       </div>
